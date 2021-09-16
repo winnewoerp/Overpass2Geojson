@@ -2,19 +2,99 @@
 
 class Overpass2Geojson {
 	
-	public static $polygon;
+    /**
+     * Converts a JSON string or decoded array into a GeoJSON string or array.
+     * This creates a feature for each supplied node, way, or relation. Ways
+     * that are part of relations and nodes that are part of ways are not being
+	 * created as separate features.
+     * @param  mixed   $input  JSON string or array
+     * @param  boolean $encode whether to encode output as string
+     * @return mixed           false if failed, otherwise GeoJSON string or array
+     */
+	 public static function convertElements($input, $encode = true) {
 	
+		$inputArray = self::validateInput($input);
+        if (!$inputArray) {
+            return false;
+        }
+		
+        $nodes = self::collectNodes($inputArray['elements']);
+		
+		$output = array(
+            'type' => 'FeatureCollection',
+            'features' => array(),
+        );
+		
+		// arrays to collect relation ways and way nodes
+		$relationWayIds = array();
+		$wayNodeIds = array();
+		
+		// relations (only works for multipolygon relations so far!)
+		foreach ($inputArray['elements'] as $osmItem) {
+			if (isset($osmItem['type']) && $osmItem['type'] === 'relation') {
+				$ways = array();
+				foreach ($osmItem['members'] as $member) {
+					$memberId = $member['ref'];
+					$wayNodes = $inputArray['elements'][array_search($member['ref'], array_column($inputArray['elements'], 'nodes'))];
+					foreach($wayNodes as $wayNode) {
+						$wayNodeIds[] = $wayNode;
+					}
+					$feature = self::createMemberFeature($inputArray['elements'][array_search($member['ref'], array_column($inputArray['elements'], 'id'))], $nodes);
+					
+					// check for ways that are part of a relation
+					if ($feature) {
+						$ways[] = $feature;
+					}
+					$relationWayIds[] = $member['ref'];
+				}
+				$output['features'][] = self::createRelationFeature($osmItem, $ways);
+            }
+		}
+		
+		// ways
+		foreach ($inputArray['elements'] as $osmItem) {
+            if (isset($osmItem['type']) && $osmItem['type'] === 'way') {
+				if(!in_array($osmItem['id'],$relationWayIds)) {
+					
+					$feature = self::createWayFeature($osmItem, $nodes);
+					if ($feature) {
+						$output['features'][] = $feature;
+					}
+				}
+				
+				// check for nodes that are part of a way
+				foreach($osmItem['nodes'] as $wayNode) {
+					$wayNodeIds[] = $wayNode;
+				}
+            }
+		}
+		
+		// nodes
+		foreach ($nodes as $node) {
+			if (isset($node['tags']) && $node['tags'] && !in_array($node['id'],$wayNodeIds)) {
+				$output['features'][] = array(
+					'type' => 'Feature',
+					'properties' => $node['tags'],
+					'geometry' => array(
+						'type' => 'Point',
+						'coordinates' => array($node['lon'], $node['lat']),
+					),
+				);
+			}
+        }
+		
+        return $encode ? json_encode($output, JSON_PRETTY_PRINT) : $output;
+	}
+		
     /**
      * Converts a JSON string or decoded array into a GeoJSON string or array.
      * This creates a LineString feature for each supplied way, using the nodes
      * only as points for the LineString.
      * @param  mixed   $input  JSON string or array
-     * @param  boolean $encode whether to encode output as string
+     * @param  boolean $encode whether to encode output as strin
      * @return mixed           false if failed, otherwise GeoJSON string or array
      */
-    public static function convertWays($input, $encode = true, $polygon = false) {
-	    
-	    self::$polygon = $polygon;
+    public static function convertWays($input, $encode = true) {
 	    
         $inputArray = self::validateInput($input);
         if (!$inputArray) {
@@ -33,20 +113,18 @@ class Overpass2Geojson {
                 }
             }
         }
-        return $encode ? json_encode($output) : $output;
+        return $encode ? json_encode($output, JSON_PRETTY_PRINT) : $output;
     }
 	
     /**
      * Converts a JSON string or decoded array into a GeoJSON string or array.
      * This creates a Polygon feature for each supplied relation with member ways
-	 * and their respective nodes as points
+     * and their respective nodes as points
      * @param  mixed   $input  JSON string or array
      * @param  boolean $encode whether to encode output as string
      * @return mixed           false if failed, otherwise GeoJSON string or array
      */
-    public static function convertRelations($input, $encode = true, $polygon = false) {
-	    
-	    self::$polygon = $polygon;
+    public static function convertRelations($input, $encode = true) {
 	    
         $inputArray = self::validateInput($input);
         if (!$inputArray) {
@@ -70,7 +148,7 @@ class Overpass2Geojson {
 				$output['features'][] = self::createRelationFeature($osmItem, $ways);
             }
         }
-        return $encode ? json_encode($output) : $output;
+        return $encode ? json_encode($output, JSON_PRETTY_PRINT) : $output;
     }
 
     /**
@@ -97,7 +175,7 @@ class Overpass2Geojson {
                 ),
             );
         }
-        return $encode ? json_encode($output) : $output;
+        return $encode ? json_encode($output, JSON_PRETTY_PRINT) : $output;
     }
 
     private static function validateInput($input) {
@@ -153,12 +231,17 @@ class Overpass2Geojson {
                 }
             }
         }
+
+		// polygon detection: compare coordinates of first and last node of way
+		$is_polygon = false;
+		if($coords[0] == $coords[sizeof($coords)-1]) $is_polygon = true;
+		
         if (count($coords) >= 2) {
             return array(
                 'type' => 'Feature',
                 'geometry' => array(
-                    'type' => self::$polygon ? 'Polygon' : 'LineString',
-                    'coordinates' => self::$polygon ? [$coords] : $coords,
+                    'type' => $is_polygon ? 'Polygon' : 'LineString',
+                    'coordinates' => $is_polygon ? [$coords] : $coords,
                 ),
                 'properties' => isset($way['tags']) ? array_merge($way['tags'], ["id"=>$way['id']]) : ["id"=>$way['id']],
             );
