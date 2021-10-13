@@ -29,9 +29,9 @@ class Overpass2Geojson {
 		$relationWayIds = array();
 		$wayNodeIds = array();
 		
-		// relations (only works for multipolygon relations so far!)
+		// multipolygons
 		foreach ($inputArray['elements'] as $osmItem) {
-			if (isset($osmItem['type']) && $osmItem['type'] === 'relation') {
+			if (isset($osmItem['type']) && $osmItem['type'] === 'relation' && $osmItem['tags']['type'] == 'multipolygon') {
 				$ways = array();
 				foreach ($osmItem['members'] as $member) {
 					$memberId = $member['ref'];
@@ -47,7 +47,7 @@ class Overpass2Geojson {
 					}
 					$relationWayIds[] = $member['ref'];
 				}
-				$output['features'][] = self::createRelationFeature($osmItem, $ways);
+				$output['features'][] = self::createMultipolygonFeature($osmItem, $ways);
             }
 		}
 		
@@ -145,7 +145,7 @@ class Overpass2Geojson {
 						$ways[] = $feature;
 					}
 				}
-				$output['features'][] = self::createRelationFeature($osmItem, $ways);
+				$output['features'][] = self::createMultipolygonFeature($osmItem, $ways);
             }
         }
         return $encode ? json_encode($output, JSON_PRETTY_PRINT) : $output;
@@ -256,7 +256,7 @@ class Overpass2Geojson {
      * @return mixed           false if invalid feature otherwise
      *                         array GeoJSON Feature with Polygon geometry
      */
-    public static function createRelationFeature($relation, $ways) {
+    public static function createMultipolygonFeature($relation, $ways) {
 		return array(
 			'type' => 'Feature',
 			'geometry' => array(
